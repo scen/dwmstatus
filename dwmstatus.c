@@ -189,6 +189,14 @@ runcmd(char* cmd) {
 	return smprintf("%s", ln);
 }
 
+#define BATTERY "/proc/acpi/battery/BAT1"
+#define ADAPTER "/proc/acpi/ac_adapter/ADP1/state"
+#define VOLCMD "echo $(amixer get Master | tail -n1 | sed -r 's/.*\\[(.*)%\\].*/\\1/')%"
+#define MEMCMD "echo $(free -m | awk '/buffers\\/cache/ {print $3}')M"
+#define RXCMD "cat /sys/class/net/wlan0/statistics/rx_bytes"
+#define TXCMD "cat /sys/class/net/wlan0/statistics/tx_bytes"
+
+
 int
 main(void)
 {
@@ -199,25 +207,35 @@ main(void)
 	char *charge;
 	char* vol;
 	char *mem;
-
+	char *rx_old, *rx_now, *tx_old, *tx_now;
+	int rx_rate, tx_rate; //kilo bytes
 	if (!(dpy = XOpenDisplay(NULL))) {
 		fprintf(stderr, "dwmstatus: cannot open display.\n");
 		return 1;
 	}
-
+	rx_old = runcmd(RXCMD);
+	tx_old = runcmd(TXCMD);
 	for (;;sleep(1)) {
 		avgs = loadavg();
-		bat = getbattery("/proc/acpi/battery/BAT1");
+		bat = getbattery(BATTERY);
 		tmpst = mktimes("%a %d %b, %H:%M ", tzpst);
-		charge = chargeStatus("/proc/acpi/ac_adapter/ADP1/state");
-		vol = runcmd("echo $(amixer get Master | tail -n1 | sed -r 's/.*\\[(.*)%\\].*/\\1/')%");
-		mem = runcmd("echo $(free -m | awk '/buffers\\/cache/ {print $3}')M");
-		status = smprintf("%s [cpu] | %s [mem] | %s [vol] | %s%% [%s] | %s",
-				 avgs, mem, vol, bat, charge, tmpst);
-		
+		charge = chargeStatus(ADAPTER);
+		vol = runcmd(VOLCMD);
+		mem = runcmd(MEMCMD);
+		//get transmitted and recv'd bytes
+		rx_now = runcmd(RXCMD);
+		tx_now = runcmd(TXCMD);
+		rx_rate = (atoi(rx_now) - atoi(rx_old)) / 1024;
+		tx_rate = (atoi(tx_now) - atoi(tx_old)) / 1024;
+		status = smprintf("%dK [up] %dK [dn] | %s [cpu] | %s [mem] | %s [vol] | %s%% [%s] | %s",
+				 tx_rate, rx_rate, avgs, mem, vol, bat, charge, tmpst);
+		strcpy(rx_old, rx_now);
+		strcpy(tx_old, tx_now);
 		//printf("%s\n", status);
 		setstatus(status);
 		free(avgs);
+		free(rx_now);
+		free(tx_now);
 		free(bat);
 		free(vol);
 		free(tmpst);
