@@ -189,6 +189,66 @@ runcmd(char* cmd) {
 	return smprintf("%s", ln);
 }
 
+static unsigned long long lastTotalUser[4], lastTotalUserLow[4], lastTotalSys[4], lastTotalIdle[4];
+    
+char trash[5];
+
+void initcore(){
+        FILE* file = fopen("/proc/stat", "r");
+            	char ln[100];
+
+        for (int i = 0; i < 5; i++) {
+        	fgets(ln, 99, file);
+        	if (i < 1) continue;
+        	sscanf(ln, "%s %Ld %Ld %Ld %Ld", trash, &lastTotalUser[i-1], &lastTotalUserLow[i-1],
+                &lastTotalSys[i-1], &lastTotalIdle[i-1]);
+        }
+     fclose(file);
+
+}
+    
+void getcore(char cores[4][5]){
+        double percent;
+        FILE* file;
+        unsigned long long totalUser[4], totalUserLow[4], totalSys[4], totalIdle[4], total[4];
+    
+    	    	char ln[100];
+
+        file = fopen("/proc/stat", "r");
+        for (int i = 0; i < 5; i++) {
+        	fgets(ln, 99, file);
+        	if (i < 1) continue;
+	        sscanf(ln, "%s %Ld %Ld %Ld %Ld", trash, &totalUser[i-1], &totalUserLow[i-1],
+	                &totalSys[i-1], &totalIdle[i-1]);
+	    }
+        fclose(file);
+    
+    	for (int i = 0; i < 4; i++) {
+	        if (totalUser[i] < lastTotalUser[i] || totalUserLow[i]< lastTotalUserLow[i] ||
+	                totalSys[i] < lastTotalSys[i] || totalIdle[i] < lastTotalIdle[i]){
+	                //Overflow detection. Just skip this value.
+	                percent = -1.0;
+	        }
+	        else{
+	                total[i] = (totalUser[i] - lastTotalUser[i]) + (totalUserLow[i] - lastTotalUserLow[i]) +
+	                        (totalSys[i] - lastTotalSys[i]);
+	                percent = total[i];
+	                total[i] += (totalIdle[i] - lastTotalIdle[i]);
+	                percent /= total[i];
+	                percent *= 100;
+	        }
+	        strcpy(cores[i], smprintf("%d%%", (int)percent));
+	    }
+    
+    	for (int i = 0; i < 4; i++) {
+	        lastTotalUser[i] = totalUser[i];
+	        lastTotalUserLow[i] = totalUserLow[i];
+	        lastTotalSys[i] = totalSys[i];
+	        lastTotalIdle[i] = totalIdle[i];
+	    }
+   
+}
+
 #define BATTERY "/proc/acpi/battery/BAT1"
 #define ADAPTER "/proc/acpi/ac_adapter/ADP1/state"
 #define VOLCMD "echo $(amixer get Master | tail -n1 | sed -r 's/.*\\[(.*)%\\].*/\\1/')%"
@@ -203,11 +263,14 @@ main(void)
 	char *status;
 	char *avgs;
 	char *bat;
-	char *tmpst;
+	char *date;
 	char *charge;
+	char *tme;
 	char* vol;
+	char cores[4][5];
 	char *mem;
 	char *rx_old, *rx_now, *tx_old, *tx_now;
+	initcore();
 	int rx_rate, tx_rate; //kilo bytes
 	if (!(dpy = XOpenDisplay(NULL))) {
 		fprintf(stderr, "dwmstatus: cannot open display.\n");
@@ -216,9 +279,10 @@ main(void)
 	rx_old = runcmd(RXCMD);
 	tx_old = runcmd(TXCMD);
 	for (;;sleep(1)) {
-		avgs = loadavg();
+		//avgs = loadavg();
 		bat = getbattery(BATTERY);
-		tmpst = mktimes("%a %d %b, %H:%M ", tzpst);
+		date = mktimes("%a, %d %b", tzpst);
+		tme = mktimes("%H:%M", tzpst);
 		charge = chargeStatus(ADAPTER);
 		vol = runcmd(VOLCMD);
 		mem = runcmd(MEMCMD);
@@ -227,18 +291,19 @@ main(void)
 		tx_now = runcmd(TXCMD);
 		rx_rate = (atoi(rx_now) - atoi(rx_old)) / 1024;
 		tx_rate = (atoi(tx_now) - atoi(tx_old)) / 1024;
-		status = smprintf("%dK [up] %dK [dn] | %s [cpu] | %s [mem] | %s [vol] | %s%% [%s] | %s",
-				 tx_rate, rx_rate, avgs, mem, vol, bat, charge, tmpst);
+		getcore(cores);
+		status = smprintf("\x05[ \x01WLAN0: \x06%dK\x05 / \x06%dK\x05 ][ \x01VOL: \x06%s \x05][\x01 CPU: \x04%s\x05 / \x04%s\x05 / \x04%s\x05 / \x04%s \x05][\x01 RAM: \x04%s\x05 ][ \x03%s\x05 ][ \x03%s\x05 ]",
+				  rx_rate, tx_rate, vol, cores[0], cores[1], cores[2], cores[3], mem, date, tme);
 		strcpy(rx_old, rx_now);
 		strcpy(tx_old, tx_now);
 		//printf("%s\n", status);
 		setstatus(status);
-		free(avgs);
+		//free(avgs);
 		free(rx_now);
 		free(tx_now);
 		free(bat);
 		free(vol);
-		free(tmpst);
+		free(date);
 		free(status);
 	}
 
